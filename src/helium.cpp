@@ -2,12 +2,22 @@
 
 #include <iostream>
 #include <memory>
+#include <cassert>
 
 using std::unique_ptr;
 using std::make_unique;
 
 
-class uv_loop {
+namespace helium {
+    class uv_loop;
+
+    void on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv_buf_t *buf);
+    void on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *buf);
+    void on_new_connection(::uv_stream_t *server, int status);
+    int helium_main(int argc, char *argv[]);
+}
+
+class helium::uv_loop {
 private:
     ::uv_loop_t loop;
 
@@ -15,8 +25,11 @@ public:
     uv_loop(void) {
         static_cast<void>(::uv_loop_init(&loop));
     }
+
     uv_loop(const uv_loop &) = delete;
-    uv_loop& operator=(const uv_loop &) = delete;
+
+    uv_loop &operator=(const uv_loop &) = delete;
+
     ~uv_loop(void) {
         static_cast<void>(::uv_loop_close(&loop));
     }
@@ -34,10 +47,67 @@ public:
 };
 
 
+unique_ptr<helium::uv_loop> loop;
+
+
+void helium::on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv_buf_t *buf) {
+    buf->base = new char[suggested_size];
+    buf->len = suggested_size;
+}
+
+
+void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *buf) {
+    if (nread < 0) {
+        // UV_EOF or UV_ECONNRESET
+        ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
+        delete(cli);
+        return;
+    }
+    fprintf(stderr, "%.*s\n", buf->len, buf->base);
+    delete[](buf->base);
+}
+
+
+void helium::on_new_connection(::uv_stream_t *server, int status) {
+    ::uv_tcp_t *_cli = nullptr;
+    ::uv_stream_t **cli = reinterpret_cast<::uv_stream_t **>(&_cli);
+
+    if (status < 0) {
+        return;
+    }
+
+    _cli = new ::uv_tcp_t();
+    ::uv_tcp_init(loop->get_naked_loop(), _cli);
+
+    if (::uv_accept(server, *cli) != 0) {
+        delete(cli);
+        return;
+    }
+
+    ::uv_read_start(*cli, &helium::on_alloc_buffer, &helium::on_read);
+}
+
+
+int helium::helium_main(int argc, char *argv[]) {
+    int err = 0;
+    ::sockaddr_in6 addr = {};
+    ::uv_tcp_t server = {};
+    loop = make_unique<uv_loop>();
+
+    ::uv_tcp_init(loop->get_naked_loop(), &server);
+    ::uv_ip6_addr("::", 8008, &addr);
+    ::uv_tcp_bind(&server, reinterpret_cast<const ::sockaddr *>(&addr), 0);
+
+    err = ::uv_listen(reinterpret_cast<::uv_stream_t *>(&server), 1, helium::on_new_connection);
+    if (err != 0) {
+        // listen failed
+        fprintf(stderr, "%s\n", ::uv_strerror(err));
+        return EXIT_FAILURE;
+    }
+
+    return loop->run(UV_RUN_DEFAULT);
+}
+
 int main(int argc, char *argv[]) {
-    unique_ptr<uv_loop> loop = make_unique<uv_loop>();
-
-    loop->run(UV_RUN_DEFAULT);
-
-    return 0;
+    return helium::helium_main(argc, argv);
 }
