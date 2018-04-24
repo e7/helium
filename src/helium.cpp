@@ -48,23 +48,34 @@ public:
 
 
 unique_ptr<helium::uv_loop> loop;
+// 读缓冲大小
+static int const SZ_RBUF = 16 * 1024 * 1024;
 
 
 void helium::on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv_buf_t *buf) {
-    buf->base = new char[suggested_size];
-    buf->len = suggested_size;
+    buf->base = new char[SZ_RBUF];
+    buf->len = SZ_RBUF;
 }
 
 
 void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *buf) {
+    std::unique_ptr<char[]> buf_ptr(buf->base);
+
     if (nread < 0) {
         // UV_EOF or UV_ECONNRESET
+
+        // 关闭连接
         ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
         delete(cli);
         return;
     }
+
+    if (nread == buf->len) {
+        // too large entity
+        return;
+    }
+
     fprintf(stderr, "%.*s\n", buf->len, buf->base);
-    delete[](buf->base);
 }
 
 
