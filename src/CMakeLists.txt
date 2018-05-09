@@ -1,3 +1,7 @@
-add_executable(helium helium.cpp)
+add_executable(helium helium.cpp jpeg2faceid_transfer.cpp jpeg2faceid_transfer.hpp)
 set_target_properties(helium PROPERTIES LINK_FLAGS "-static-libstdc++")
-target_link_libraries(helium uv.a pthread unwind tcmalloc.a arcsoft_fsdk_face_recognition)
+target_link_libraries(
+        helium uv.a pthread unwind arcsoft_fsdk_face_recognition
+        arcsoft_fsdk_face_detection turbojpeg.a
+        tcmalloc.a
+)
