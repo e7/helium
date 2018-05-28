@@ -2,9 +2,8 @@
 
 #include <iostream>
 #include <memory>
-#include <cassert>
 #include <cstring>
-#include "jpeg2faceid_transfer.hpp"
+#include "jpeg2faceid_transfer.h"
 
 
 using std::unique_ptr;
@@ -64,14 +63,16 @@ void helium::on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv
 
 
 void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *uv_rbuf) {
-    std::unique_ptr<char[]> buf_ptr(uv_rbuf->base);
+    std::unique_ptr<char, void(*)(char*)> buf_ptr(
+            uv_rbuf->base, [](char* p){delete[](p);}
+    );
+    std::unique_ptr<::uv_stream_t> cli_ptr(cli);
 
     if (nread < 0) {
         // UV_EOF or UV_ECONNRESET
 
         // 关闭连接
         ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
-        delete(cli);
         return;
     }
 
@@ -80,12 +81,18 @@ void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *uv_rbu
         return;
     }
 
-    fprintf(stderr, "recv size:%d\n", nread);
+    jpeg2faceid_transfer jft(reinterpret_cast<uint8_t *>(uv_rbuf->base), nread);
+    if (! jft.init()) {
+        // 初始化失败
+        return;
+    }
 
-    ::uv_write_t *req = new uv_write_t();
-    ::uv_buf_t uv_sbuf = ::uv_buf_init(nullptr, 0
-    );
-    ::uv_write(req, cli, &uv_sbuf, 1, helium::on_write);
+    // 获取人脸特征文件
+    auto faceid = jft.genFaceId();
+
+    // 发送文件
+    ::uv_write(new uv_write_t(), cli, faceid.get(), 1, helium::on_write);
+    ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
 }
 
 
@@ -130,7 +137,8 @@ int helium::helium_main(int argc, char *argv[]) {
     ::uv_ip6_addr("::", 8008, &addr);
     ::uv_tcp_bind(&server, reinterpret_cast<const ::sockaddr *>(&addr), 0);
 
-    err = ::uv_listen(reinterpret_cast<::uv_stream_t *>(&server), 1, helium::on_new_connection);
+    err = ::uv_listen(reinterpret_cast<::uv_stream_t *>(&server),
+                      1, helium::on_new_connection);
     if (err != 0) {
         // listen failed
         fprintf(stderr, "%s\n", ::uv_strerror(err));
@@ -142,9 +150,14 @@ int helium::helium_main(int argc, char *argv[]) {
 
 
 int main(int argc, char *argv[]) {
+    int rslt;
+
     // 初始化单例
     helium::afd_fsdk_engine::get_instance();
     helium::afr_fsdk_engine::get_instance();
 
-    return helium::helium_main(argc, argv);
+    rslt = helium::helium_main(argc, argv);
+    fprintf(stdout, "server stoped\n");
+
+    return rslt;
 }

@@ -5,10 +5,11 @@
 #include <cstring>
 #include <arcsoft_fsdk_face_detection.h>
 #include <arcsoft_fsdk_face_recognition.h>
-#include "jpeg2faceid_transfer.hpp"
+#include "jpeg2faceid_transfer.h"
 
 
 bool helium::jpeg2faceid_transfer::init() {
+    ASSERT(!inited);
     handle = ::tjInitDecompress();
     return (nullptr != handle);
 }
@@ -68,18 +69,18 @@ LPAFD_FSDK_FACERES helium::jpeg2faceid_transfer::face_detection(
 }
 
 
-unique_ptr<uint8_t[]> helium::jpeg2faceid_transfer::genFaceId() {
+unique_ptr<::uv_buf_t> helium::jpeg2faceid_transfer::genFaceId() {
     uint8_t *yuv_buf;
     size_t yuv_size;
     int yuv_type, width, height;
-    unique_ptr<uint8_t[]> rslt;
+    unique_ptr<::uv_buf_t> rslt;
     auto hrecognition = afr_fsdk_engine::get_instance()->get_engine();
 
     // jpeg转换为yuv
     if (-1 == tjpeg2yuv(&yuv_buf, &yuv_size, &yuv_type, &width, &height)) {
-        return unique_ptr<uint8_t[]>(nullptr);
+        return nullptr;
     }
-    unique_ptr<uint8_t[]> free_yuv_buf(yuv_buf);
+    auto free_yuv_buf = std::make_unique<uint8_t[]> (*yuv_buf);
 
     // 人脸检测
     auto facers = face_detection(yuv_buf, width, height);
@@ -113,8 +114,8 @@ unique_ptr<uint8_t[]> helium::jpeg2faceid_transfer::genFaceId() {
         return nullptr;
     }
 
-    rslt = std::make_unique<uint8_t[]>(facemodel.lFeatureSize);
-    ::memcpy(rslt.get(), facemodel.pbFeature, facemodel.lFeatureSize);
+    auto rsp_buf = ::uv_buf_init(new char[facemodel.lFeatureSize], facemodel.lFeatureSize);
+    ::memcpy(rsp_buf.base, facemodel.pbFeature, facemodel.lFeatureSize);
 
-    return rslt;
+    return std::make_unique<::uv_buf_t>(rsp_buf);
 }

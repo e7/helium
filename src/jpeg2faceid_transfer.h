@@ -5,14 +5,18 @@
 #ifndef HELIUM_JPEG2FACEID_TRANSFER_HPP
 #define HELIUM_JPEG2FACEID_TRANSFER_HPP
 
-#include <string>
 #include <cstdio>
+
+#include <string>
 #include <memory>
+
+#include <uv.h>
 #include <turbojpeg.h>
 #include <arcsoft_fsdk_face_detection.h>
 #include <arcsoft_fsdk_face_recognition.h>
 #include <merror.h>
 
+#define ASSERT(C)                   do {if (!(C)) ::abort();} while (0)
 #define ARC_SOFT_APPID              "CyQcgkFu1zhQXaoqS5guq6piAkKrmG2eS2xnKLUaN3m8"
 #define ARC_SOFT_DETECTION_KEY      "FrDSjJDyiCc6tBcug1uUzY5MpbpUjcbpkZzvj2FAm14R"
 #define ARC_SOFT_RECOGNITION_KEY    "FrDSjJDyiCc6tBcug1uUzY5rUCs8AMck1XLXeh5umRfG"
@@ -24,6 +28,7 @@ using std::unique_ptr;
 
 
 namespace helium {
+    // 人脸检测
     class afd_fsdk_engine final {
     public:
         afd_fsdk_engine& operator=(afd_fsdk_engine const&) = delete;
@@ -68,6 +73,7 @@ namespace helium {
     };
 
 
+    // 人脸识别
     class afr_fsdk_engine final {
     public:
         afr_fsdk_engine& operator=(afr_fsdk_engine const&) = delete;
@@ -110,6 +116,7 @@ namespace helium {
         MHandle engine;
     };
 
+    // jpeg转faceid文件
     class jpeg2faceid_transfer final {
     public:
         jpeg2faceid_transfer(uint8_t const *jpeg_buf, ssize_t buf_len)
@@ -118,7 +125,7 @@ namespace helium {
         ~jpeg2faceid_transfer();
 
         bool init();
-        unique_ptr<uint8_t[]> genFaceId();
+        unique_ptr<::uv_buf_t> genFaceId();
 
     private:
         // jpeg转yuv
@@ -128,6 +135,7 @@ namespace helium {
         LPAFD_FSDK_FACERES face_detection(uint8_t *yuv_buf, int width, int height);
 
     private:
+        bool inited = false;
         ::tjhandle handle = nullptr;
         uint8_t const *buf = nullptr;
         size_t len = 0;
