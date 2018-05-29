@@ -93,7 +93,7 @@ namespace helium {
             return &inst;
         }
         ~afr_fsdk_engine() {
-            ::AFR_FSDK_UninitialEngine(&engine);
+            ::AFR_FSDK_UninitialEngine(engine);
         }
 
         // 获取句柄
