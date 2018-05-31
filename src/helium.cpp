@@ -89,10 +89,17 @@ void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *uv_rbu
 
     // 获取人脸特征文件
     auto faceid = jft.genFaceId();
+    if (nullptr == faceid) {
+        // 未找到人脸
+        ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
+        return;
+    }
 
     // 发送文件
     ::uv_write(new uv_write_t(), cli, faceid.get(), 1, helium::on_write);
     ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
+
+    return;
 }
 
 
