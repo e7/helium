@@ -33,7 +33,12 @@ int helium::jpeg2faceid_transfer::tjpeg2yuv(
                           width, height, &subsample, &colorspace);
     *yuv_type = subsample;
     *yuv_size = ::tjBufSizeYUV2(*width, padding, *height, subsample);
-    *yuv_buf = new uint8_t[*yuv_size];
+    *yuv_buf = new (std::nothrow) uint8_t[*yuv_size];
+
+    if (nullptr == *yuv_buf) {
+        fprintf(stderr, "[FATAL] !! out of memory !!\n");
+        ::abort();
+    }
 
     return ::tjDecompressToYUV2(
             handle, buf, len, *yuv_buf, *width, padding, *height, flags
@@ -114,7 +119,9 @@ unique_ptr<::uv_buf_t> helium::jpeg2faceid_transfer::genFaceId() {
         return nullptr;
     }
 
-    auto rsp_buf = ::uv_buf_init(new char[facemodel.lFeatureSize], facemodel.lFeatureSize);
+    auto rsp_buf = ::uv_buf_init(
+            new (std::nothrow) char[facemodel.lFeatureSize], facemodel.lFeatureSize
+    );
     ::memcpy(rsp_buf.base, facemodel.pbFeature, facemodel.lFeatureSize);
 
     return std::make_unique<::uv_buf_t>(rsp_buf);

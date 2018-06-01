@@ -57,7 +57,7 @@ static int const SZ_RBUF = 16 * 1024 * 1024;
 
 
 void helium::on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv_buf_t *buf) {
-    buf->base = new char[SZ_RBUF];
+    buf->base = new (std::nothrow) char[SZ_RBUF];
     buf->len = SZ_RBUF;
 }
 
@@ -96,7 +96,7 @@ void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *uv_rbu
     }
 
     // 发送文件
-    ::uv_write(new uv_write_t(), cli, faceid.get(), 1, helium::on_write);
+    ::uv_write(new (std::nothrow) uv_write_t(), cli, faceid.get(), 1, helium::on_write);
     ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
 
     return;
@@ -122,7 +122,7 @@ void helium::on_new_connection(::uv_stream_t *server, int status) {
         return;
     }
 
-    _cli = new ::uv_tcp_t();
+    _cli = new (std::nothrow) ::uv_tcp_t();
     ::uv_tcp_init(loop->get_naked_loop(), _cli);
 
     if (::uv_accept(server, *cli) != 0) {
