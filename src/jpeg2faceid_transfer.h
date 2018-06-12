@@ -10,7 +10,6 @@
 #include <string>
 #include <memory>
 
-#include <uv.h>
 #include <turbojpeg.h>
 #include <arcsoft_fsdk_face_detection.h>
 #include <arcsoft_fsdk_face_recognition.h>
@@ -23,11 +22,23 @@
 #define ARC_SOFT_WORKBUF_SIZE       (40*1024*1024)
 #define ARC_SOFT_MAX_FACE_NUM       50
 
+using std::array;
 using std::string;
 using std::unique_ptr;
 
 
 namespace helium {
+    struct intu_array {
+        uint8_t *data;
+        size_t len;
+        intu_array() : data(nullptr), len(0) {}
+        explicit intu_array(uint8_t *d, size_t l) : data(d), len(l) {}
+        intu_array(intu_array&& o) {
+            this->data = o.data;
+            this->len = o.len;
+        }
+    };
+
     // 人脸检测
     class afd_fsdk_engine final {
     public:
@@ -125,7 +136,7 @@ namespace helium {
         ~jpeg2faceid_transfer();
 
         bool init();
-        unique_ptr<::uv_buf_t> genFaceId();
+        intu_array&& genFaceId();
 
     private:
         // jpeg转yuv

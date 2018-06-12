@@ -17,6 +17,7 @@ if "__main__" == __name__:
 
     s.sendall(data)
     rsp = s.recv(1000000)
+    print(len(rsp))
     with open("output.data", "wb") as opf:
         opf.write(rsp)
     rsp = s.recv(1)

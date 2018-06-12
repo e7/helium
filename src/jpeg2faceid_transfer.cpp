@@ -7,6 +7,8 @@
 #include <arcsoft_fsdk_face_recognition.h>
 #include "jpeg2faceid_transfer.h"
 
+using helium::intu_array;
+
 
 bool helium::jpeg2faceid_transfer::init() {
     ASSERT(!inited);
@@ -29,14 +31,19 @@ int helium::jpeg2faceid_transfer::tjpeg2yuv(
     int padding = 1; // 1或4均可，但不能是0
     int ret = 0;
 
-    ::tjDecompressHeader3(handle, buf, len,
-                          width, height, &subsample, &colorspace);
+    if (-1 == ::tjDecompressHeader3(
+            handle, buf, len, width, height, &subsample, &colorspace)) {
+        return -1;
+    }
     *yuv_type = subsample;
     *yuv_size = ::tjBufSizeYUV2(*width, padding, *height, subsample);
+    if (-1 == *yuv_size) {
+        return -1;
+    }
     *yuv_buf = new (std::nothrow) uint8_t[*yuv_size];
 
     if (nullptr == *yuv_buf) {
-        fprintf(stderr, "[FATAL] !! out of memory !!\n");
+        fprintf(stderr, "[FATAL] !! out of memory, require size %lu !!\n", *yuv_size);
         ::abort();
     }
 
@@ -74,26 +81,27 @@ LPAFD_FSDK_FACERES helium::jpeg2faceid_transfer::face_detection(
 }
 
 
-unique_ptr<::uv_buf_t> helium::jpeg2faceid_transfer::genFaceId() {
+intu_array&& helium::jpeg2faceid_transfer::genFaceId() {
     uint8_t *yuv_buf;
     size_t yuv_size;
     int yuv_type, width, height;
-    unique_ptr<::uv_buf_t> rslt;
     auto hrecognition = afr_fsdk_engine::get_instance()->get_engine();
 
     // jpeg转换为yuv
     if (-1 == tjpeg2yuv(&yuv_buf, &yuv_size, &yuv_type, &width, &height)) {
-        return nullptr;
+        fprintf(stderr, "translate jpeg to yuv failed:%s\n", ::tjGetErrorStr());
+        return std::move(intu_array());
     }
     auto free_yuv_buf = std::make_unique<uint8_t[]> (*yuv_buf);
 
     // 人脸检测
     auto facers = face_detection(yuv_buf, width, height);
     if (!facers) {
-        return nullptr;
+        fprintf(stderr, "no face found\n");
+        return std::move(intu_array());
     }
 
-    // 人脸识别
+    // 人脸特征生成
     ASVLOFFSCREEN input_img = {0};
     input_img.u32PixelArrayFormat = ASVL_PAF_I420;
     input_img.i32Width = width;
@@ -116,13 +124,12 @@ unique_ptr<::uv_buf_t> helium::jpeg2faceid_transfer::genFaceId() {
     };
     auto r = ::AFR_FSDK_ExtractFRFeature(hrecognition, &input_img, &faceinput, &facemodel);
     if (0 != r) {
-        return nullptr;
+        fprintf(stderr, "no feature\n");
+        return std::move(intu_array());
     }
 
-    auto rsp_buf = ::uv_buf_init(
-            new (std::nothrow) char[facemodel.lFeatureSize], facemodel.lFeatureSize
-    );
-    ::memcpy(rsp_buf.base, facemodel.pbFeature, facemodel.lFeatureSize);
+    intu_array facebuf(new (std::nothrow) uint8_t[facemodel.lFeatureSize], facemodel.lFeatureSize);
+    ::memcpy(facebuf.data, facemodel.pbFeature, facemodel.lFeatureSize);
 
-    return std::make_unique<::uv_buf_t>(rsp_buf);
+    return std::move(facebuf);
 }

@@ -1,158 +1,115 @@
-#include <uv.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <iostream>
 #include <memory>
 #include <cstring>
+#include <thread>
+
+#include "readerwriterqueue.h"
 #include "jpeg2faceid_transfer.h"
 
 
 using std::unique_ptr;
 using std::make_unique;
+using std::thread;
 
+// 单生产者，单消费者无锁队列
+// A fast **single-producer, single-consumer** lock-free queue for C++
+using moodycamel::BlockingReaderWriterQueue;
+
+// 读缓冲大小
+static int const SZ_RBUF = 16 * 1024 * 1024;
+
+// fd队列
+static BlockingReaderWriterQueue<int> fd_queue(4);
 
 namespace helium {
-    class uv_loop;
+    void worker_proc() {
+        int elmt;
+        uint8_t *buf = nullptr;
+        unique_ptr<uint8_t[], void(*)(uint8_t*)> buf_ptr(
+                new uint8_t[SZ_RBUF], [](uint8_t* p){delete[](p);}
+        );
 
-    void on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv_buf_t *buf);
-    void on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *buf);
-    void on_write(uv_write_t* req, int status);
-    void on_new_connection(::uv_stream_t *server, int status);
+        buf = buf_ptr.get();
+        fprintf(stderr, "start working...\n");
+        while (true) {
+            fd_queue.wait_dequeue(elmt);
+
+            if (-1 == elmt) {
+                break;
+            }
+
+            auto n = ::recv(elmt, buf, SZ_RBUF, 0);
+            if (n < 1) {
+                static_cast<void>(::close(elmt));
+                continue;
+            }
+
+            jpeg2faceid_transfer jft(buf, n);
+            if (! jft.init()) {
+                static_cast<void>(::close(elmt));
+                continue;
+            }
+
+            // 获取人脸特征文件
+            auto faceid = jft.genFaceId();
+            if (faceid.len == 0) {
+                // 未找到人脸
+                static_cast<void>(::close(elmt));
+                continue;
+            }
+
+            // 发送文件
+            ::write(elmt, faceid.data, faceid.len);
+            static_cast<void>(::shutdown(elmt, SHUT_WR));
+            static_cast<void>(::close(elmt));
+        }
+    }
     int helium_main(int argc, char *argv[]);
 }
 
 
-class helium::uv_loop {
-private:
-    ::uv_loop_t loop;
-
-public:
-    uv_loop(void) {
-        static_cast<void>(::uv_loop_init(&loop));
-    }
-
-    uv_loop(const uv_loop &) = delete;
-
-    uv_loop &operator=(const uv_loop &) = delete;
-
-    ~uv_loop(void) {
-        static_cast<void>(::uv_loop_close(&loop));
-    }
-
-    /**
-     * 获取裸的loop变量，不应被外部释放
-     */
-    ::uv_loop_t *get_naked_loop(void) {
-        return &loop;
-    }
-
-    int run(uv_run_mode mode) {
-        return ::uv_run(&loop, mode);
-    }
-};
-
-
-unique_ptr<helium::uv_loop> loop;
-// 读缓冲大小
-static int const SZ_RBUF = 16 * 1024 * 1024;
-
-
-void helium::on_alloc_buffer(::uv_handle_t *handler, size_t suggested_size, ::uv_buf_t *buf) {
-    buf->base = new (std::nothrow) char[SZ_RBUF];
-    buf->len = SZ_RBUF;
-}
-
-
-void helium::on_read(::uv_stream_t *cli, ssize_t nread, const ::uv_buf_t *uv_rbuf) {
-    std::unique_ptr<char, void(*)(char*)> buf_ptr(
-            uv_rbuf->base, [](char* p){delete[](p);}
-    );
-    std::unique_ptr<::uv_stream_t> cli_ptr(cli);
-
-    if (nread < 0) {
-        // UV_EOF or UV_ECONNRESET
-
-        // 关闭连接
-        ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
-        return;
-    }
-
-    if (nread == uv_rbuf->len) {
-        // too large entity
-        return;
-    }
-
-    jpeg2faceid_transfer jft(reinterpret_cast<uint8_t *>(uv_rbuf->base), nread);
-    if (! jft.init()) {
-        // 初始化失败
-        return;
-    }
-
-    // 获取人脸特征文件
-    auto faceid = jft.genFaceId();
-    if (nullptr == faceid) {
-        // 未找到人脸
-        ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
-        return;
-    }
-
-    // 发送文件
-    ::uv_write(new (std::nothrow) uv_write_t(), cli, faceid.get(), 1, helium::on_write);
-    ::uv_close(reinterpret_cast<::uv_handle_t *>(cli), nullptr);
-
-    return;
-}
-
-
-void helium::on_write(uv_write_t* req, int status) {
-    std::unique_ptr<uv_write_t> req_ptr(req);
-
-    if (status) {
-        return;
-    }
-
-    return;
-}
-
-
-void helium::on_new_connection(::uv_stream_t *server, int status) {
-    ::uv_tcp_t *_cli = nullptr;
-    ::uv_stream_t **cli = reinterpret_cast<::uv_stream_t **>(&_cli);
-
-    if (status < 0) {
-        return;
-    }
-
-    _cli = new (std::nothrow) ::uv_tcp_t();
-    ::uv_tcp_init(loop->get_naked_loop(), _cli);
-
-    if (::uv_accept(server, *cli) != 0) {
-        delete(cli);
-        return;
-    }
-
-    ::uv_read_start(*cli, &helium::on_alloc_buffer, &helium::on_read);
-}
-
-
 int helium::helium_main(int argc, char *argv[]) {
-    int err = 0;
-    ::sockaddr_in6 addr = {};
-    ::uv_tcp_t server = {};
-    loop = make_unique<uv_loop>();
+    int lsn_fd, noptval;
+    struct sockaddr_in serv_addr = {
+            AF_INET, ::htons(8008), {::inet_addr("127.0.0.1")}, {0},
+    };
+    // auto ncpu = thread::hardware_concurrency();
 
-    ::uv_tcp_init(loop->get_naked_loop(), &server);
-    ::uv_ip6_addr("::", 8008, &addr);
-    ::uv_tcp_bind(&server, reinterpret_cast<const ::sockaddr *>(&addr), 0);
-
-    err = ::uv_listen(reinterpret_cast<::uv_stream_t *>(&server),
-                      1, helium::on_new_connection);
-    if (err != 0) {
-        // listen failed
-        fprintf(stderr, "%s\n", ::uv_strerror(err));
+    if ((lsn_fd = ::socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+        return EXIT_FAILURE;
+    }
+    ::setsockopt(lsn_fd, SOL_SOCKET, SO_REUSEADDR,
+                 static_cast<const void *>(&noptval), sizeof(int));
+    if (::bind(lsn_fd,
+               reinterpret_cast<struct sockaddr *>(&serv_addr),
+               sizeof(serv_addr)) == -1) {
+        static_cast<void>(::close(lsn_fd));
+        return EXIT_FAILURE;
+    }
+    if (::listen(lsn_fd, SOMAXCONN) == -1) {
+        static_cast<void>(::close(lsn_fd));
         return EXIT_FAILURE;
     }
 
-    return loop->run(UV_RUN_DEFAULT);
+    thread worker(helium::worker_proc); // 工作者线程
+
+    while (true) {
+        int cli_fd = -1;
+        struct sockaddr cli;
+        socklen_t cli_len = 0; // 这里必须初始化，否则无法建立连接
+
+        cli_fd = ::accept(lsn_fd, &cli, &cli_len);
+        if (cli_fd == -1) {
+            continue;
+        }
+
+        fd_queue.enqueue(cli_fd);
+    }
 }
 
 
