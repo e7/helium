@@ -73,11 +73,12 @@ LPAFD_FSDK_FACERES helium::jpeg2faceid_transfer::face_detection(
     } while (0);
 
     auto r = ::AFD_FSDK_StillImageFaceDetection(hdetection, &input_img, &rslt);
-    if (0 == r) {
-        return rslt;
+    if (MOK != r) {
+        fprintf(stderr, "failed to detection face:0x%lx\n", r);
+        return nullptr;
     }
 
-    return nullptr;
+    return rslt;
 }
 
 
@@ -100,6 +101,7 @@ intu_array&& helium::jpeg2faceid_transfer::genFaceId() {
         fprintf(stderr, "no face found\n");
         return std::move(intu_array());
     }
+    fprintf(stderr, "face found height=%d, width=%d\n", height, width);
 
     // 人脸特征生成
     ASVLOFFSCREEN input_img = {0};
@@ -116,15 +118,15 @@ intu_array&& helium::jpeg2faceid_transfer::genFaceId() {
     AFR_FSDK_FACEMODEL facemodel = {0};
     AFR_FSDK_FACEINPUT faceinput = {
             // 只识别第一张
-            .rcFace = {
+            {
                     facers->rcFace[0].left, facers->rcFace[0].top,
                     facers->rcFace[0].right, facers->rcFace[0].bottom
             },
-            .lOrient = AFR_FSDK_FOC_0,
+            AFR_FSDK_FOC_0,
     };
     auto r = ::AFR_FSDK_ExtractFRFeature(hrecognition, &input_img, &faceinput, &facemodel);
-    if (0 != r) {
-        fprintf(stderr, "no feature\n");
+    if (MOK != r) {
+        fprintf(stderr, "generate feature failed:%lx\n", r);
         return std::move(intu_array());
     }
 

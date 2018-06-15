@@ -29,6 +29,7 @@ static BlockingReaderWriterQueue<int> fd_queue(4);
 namespace helium {
     void worker_proc() {
         int elmt;
+        uint32_t expLen;
         uint8_t *buf = nullptr;
         unique_ptr<uint8_t[], void(*)(uint8_t*)> buf_ptr(
                 new uint8_t[SZ_RBUF], [](uint8_t* p){delete[](p);}
@@ -43,13 +44,29 @@ namespace helium {
                 break;
             }
 
-            auto n = ::recv(elmt, buf, SZ_RBUF, 0);
-            if (n < 1) {
+            // 获取应收长度
+            if (::recv(elmt, &expLen, sizeof(expLen), 0) < sizeof(expLen)) {
                 static_cast<void>(::close(elmt));
                 continue;
             }
+            expLen = ::ntohl(expLen);
 
-            jpeg2faceid_transfer jft(buf, n);
+            uint32_t nrecv = 0; // 已收长度
+            while (nrecv < expLen) {
+                auto n = ::recv(elmt, buf+nrecv, SZ_RBUF-nrecv, 0);
+                if (n < 1) {
+                    static_cast<void>(::close(elmt));
+                    break;
+                }
+                nrecv += static_cast<uint32_t >(n);
+            }
+            if (nrecv < expLen) {
+                // 未能接收完整
+                continue;
+            }
+            fprintf(stderr, "[debug] image file size:%u\n", nrecv);
+
+            jpeg2faceid_transfer jft(buf, nrecv);
             if (! jft.init()) {
                 static_cast<void>(::close(elmt));
                 continue;
