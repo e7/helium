@@ -139,6 +139,8 @@ namespace helium {
         intu_array&& genFaceId();
 
     private:
+        int image2yuv(uint8_t **yuv_buf, size_t *yuv_size,
+                      int *yuv_type, int *width, int *height);
         // jpeg转yuv
         int tjpeg2yuv(uint8_t **yuv_buf, size_t *yuv_size,
                       int *yuv_type, int *width, int *height);

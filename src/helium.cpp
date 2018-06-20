@@ -64,7 +64,12 @@ namespace helium {
                 // 未能接收完整
                 continue;
             }
-            fprintf(stderr, "[debug] image file size:%u\n", nrecv);
+
+#if 0
+            FILE *f = fopen("last.jpg", "wb");
+            fwrite(buf, nrecv, 1, f);
+            fclose(f);
+#endif
 
             jpeg2faceid_transfer jft(buf, nrecv);
             if (! jft.init()) {

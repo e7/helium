@@ -3,11 +3,18 @@
 //
 
 #include <cstring>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <arcsoft_fsdk_face_detection.h>
 #include <arcsoft_fsdk_face_recognition.h>
+#include <sys/stat.h>
 #include "jpeg2faceid_transfer.h"
 
 using helium::intu_array;
+
+#define FFMPEG_IMG      "/tmp/ffmpeg.img"
+#define FFMPEG_YUV      "/tmp/ffmpeg.yuv"
 
 
 bool helium::jpeg2faceid_transfer::init() {
@@ -22,6 +29,95 @@ helium::jpeg2faceid_transfer::~jpeg2faceid_transfer() {
 }
 
 
+int helium::jpeg2faceid_transfer::image2yuv(
+        uint8_t **yuv_buf, size_t *yuv_size,
+        int *yuv_type, int *width, int *height
+) {
+    auto write_full = [](int fd, uint8_t const *buf, size_t len) -> ssize_t {
+        int sent = 0;
+        while (sent < len) {
+            auto n = ::write(fd, buf+sent, len-sent);
+            if (-1 == n) {
+                fprintf(stderr, "[ERROR] write failed:%d\n", errno);
+                return -1;
+            }
+            sent += n;
+        }
+
+        return sent;
+    };
+
+    auto read_full = [](int fd, uint8_t *buf, size_t len) -> int {
+        int read = 0;
+
+        while (true) {
+            auto n = ::read(fd, buf+read, len-read);
+            if (-1 == n) {
+                fprintf(stderr, "[ERROR] read failed:%d\n", errno);
+                return -1;
+            }
+            if (0 == n) {
+                return read;
+            }
+            read += n;
+        }
+    };
+
+    // 解压图片，解析出分辨率
+//    int subsample, colorspace;
+//    if (-1 == ::tjDecompressHeader3(
+//            handle, buf, len, width, height, &subsample, &colorspace)) {
+//        fprintf(stderr, "decompress image failed:%s\n", ::tjGetErrorStr());
+//        return -1;
+//    }
+    *width = 750;
+    *height = 500;
+
+    // 保存image
+    int write_fd = ::open(FFMPEG_IMG, O_WRONLY | O_CLOEXEC);
+    if (-1 == write_fd) {
+        fprintf(stderr, "[ERROR] open file %s failed\n", FFMPEG_IMG);
+        return -1;
+    }
+    if (-1 == write_full(write_fd, this->buf, this->len)) {
+        static_cast<void>(::close(write_fd));
+        return -1;
+    }
+    fprintf(stderr, "[INFO] write image file size:%lu\n", this->len);
+    static_cast<void>(::close(write_fd));
+
+    // 调用ffmpeg
+    auto pid = fork();
+    if (-1 == pid) {
+        fprintf(stderr, "fork() failed:%d\n", errno);
+        return -1;
+    }
+
+    if (0 == pid) {
+        // child process
+        if (execl("/usr/bin/ffmpeg",
+                  "ffmpeg", "-y", "-i", FFMPEG_IMG, "-s", "750x500",
+                  "-pix_fmt", "yuv420p", FFMPEG_YUV, nullptr)) {
+            ::fprintf(stderr, "[ERROR] failed to exec ffmpeg:%d\n", errno);
+            ::exit(1);
+        }
+    }
+    ::waitpid(pid, NULL, 0);
+
+    // 读取yuv
+    struct stat st;
+    int yuv_fd = ::open(FFMPEG_YUV, O_RDONLY);
+    if (-1 == yuv_fd) { return -1; }
+    if (-1 == ::fstat(yuv_fd, &st)) { return -1; }
+    *yuv_buf = new uint8_t[st.st_size];
+    *yuv_size = static_cast<size_t>(st.st_size);
+
+    auto nread = read_full(yuv_fd, *yuv_buf, *yuv_size);
+    static_cast<void>(::close(yuv_fd));
+    return (nread > 0) ? 0 : -1;
+}
+
+
 int helium::jpeg2faceid_transfer::tjpeg2yuv(
         uint8_t **yuv_buf, size_t *yuv_size,
         int *yuv_type, int *width, int *height
@@ -29,12 +125,14 @@ int helium::jpeg2faceid_transfer::tjpeg2yuv(
     int subsample, colorspace;
     int flags = 0;
     int padding = 1; // 1或4均可，但不能是0
-    int ret = 0;
 
     if (-1 == ::tjDecompressHeader3(
             handle, buf, len, width, height, &subsample, &colorspace)) {
         return -1;
     }
+
+    fprintf(stderr, "[debug] image file size:%lu, %dx%d\n", len, *width, *height);
+
     *yuv_type = subsample;
     *yuv_size = ::tjBufSizeYUV2(*width, padding, *height, subsample);
     if (-1 == *yuv_size) {
@@ -72,13 +170,17 @@ LPAFD_FSDK_FACERES helium::jpeg2faceid_transfer::face_detection(
         input_img.ppu8Plane[2] = input_img.ppu8Plane[1] + input_img.pi32Pitch[1] * input_img.i32Height/2;
     } while (0);
 
+    fprintf(stderr, "image resolution width:%d, height:%d\n", width, height);
     auto r = ::AFD_FSDK_StillImageFaceDetection(hdetection, &input_img, &rslt);
-    if (MOK != r) {
+    if (MOK == r) {
+        fprintf(stderr, "face detected, (%d,%d,%d,%d)\n",
+                rslt->rcFace[0].left, rslt->rcFace[0].top,
+                rslt->rcFace[0].right, rslt->rcFace[0].bottom);
+        return rslt;
+    } else {
         fprintf(stderr, "failed to detection face:0x%lx\n", r);
         return nullptr;
     }
-
-    return rslt;
 }
 
 
@@ -89,11 +191,17 @@ intu_array&& helium::jpeg2faceid_transfer::genFaceId() {
     auto hrecognition = afr_fsdk_engine::get_instance()->get_engine();
 
     // jpeg转换为yuv
-    if (-1 == tjpeg2yuv(&yuv_buf, &yuv_size, &yuv_type, &width, &height)) {
-        fprintf(stderr, "translate jpeg to yuv failed:%s\n", ::tjGetErrorStr());
+    if (-1 == image2yuv(&yuv_buf, &yuv_size, &yuv_type, &width, &height)) {
         return std::move(intu_array());
     }
-    auto free_yuv_buf = std::make_unique<uint8_t[]> (*yuv_buf);
+    unique_ptr<uint8_t[]> free_yuv_buf(yuv_buf);
+    fprintf(stderr, "yuv size:%lu\n", yuv_size);
+
+#if 0
+    FILE *f = fopen("last.yuv", "wb");
+    fwrite(yuv_buf, yuv_size, 1, f);
+    fclose(f);
+#endif
 
     // 人脸检测
     auto facers = face_detection(yuv_buf, width, height);
@@ -101,7 +209,6 @@ intu_array&& helium::jpeg2faceid_transfer::genFaceId() {
         fprintf(stderr, "no face found\n");
         return std::move(intu_array());
     }
-    fprintf(stderr, "face found height=%d, width=%d\n", height, width);
 
     // 人脸特征生成
     ASVLOFFSCREEN input_img = {0};
