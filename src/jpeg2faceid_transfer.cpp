@@ -102,7 +102,13 @@ int helium::jpeg2faceid_transfer::image2yuv(
             ::exit(1);
         }
     }
-    ::waitpid(pid, NULL, 0);
+
+    int pstat = 0;
+    ::waitpid(pid, &pstat, 0);
+    if ((!WIFEXITED(pstat)) || WEXITSTATUS(pstat)) {
+        ::fprintf(stderr, "[ERROR] ffmpeg transform faild:%d\n", WEXITSTATUS(pstat));
+        return -1;
+    }
 
     // 读取yuv
     struct stat st;
