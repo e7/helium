@@ -13,7 +13,7 @@
 
 using helium::intu_array;
 
-#define FFMPEG_IMG      "/tmp/ffmpeg.img"
+#define FFMPEG_IMG      "/tmp/ffmpeg.jpg"
 #define FFMPEG_YUV      "/tmp/ffmpeg.yuv"
 
 
@@ -74,7 +74,7 @@ int helium::jpeg2faceid_transfer::image2yuv(
     *height = 500;
 
     // 保存image
-    int write_fd = ::open(FFMPEG_IMG, O_WRONLY | O_CLOEXEC);
+    int write_fd = ::open(FFMPEG_IMG, O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (-1 == write_fd) {
         fprintf(stderr, "[ERROR] open file %s failed\n", FFMPEG_IMG);
         return -1;
