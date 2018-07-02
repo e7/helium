@@ -22,6 +22,9 @@
 #define ARC_SOFT_WORKBUF_SIZE       (40*1024*1024)
 #define ARC_SOFT_MAX_FACE_NUM       50
 
+#define FFMPEG_JPG      "/tmp/ffmpeg.jpg"
+#define FFMPEG_PNG      "/tmp/ffmpeg.png"
+
 using std::array;
 using std::string;
 using std::unique_ptr;
@@ -136,11 +139,11 @@ namespace helium {
         ~jpeg2faceid_transfer();
 
         bool init();
-        intu_array&& genFaceId();
+        intu_array&& genFaceId(char const *img_file, int width, int height);
 
     private:
-        int image2yuv(uint8_t **yuv_buf, size_t *yuv_size,
-                      int *yuv_type, int *width, int *height);
+        int image2yuv(char const *img_file, uint8_t **yuv_buf, size_t *yuv_size,
+                      int *yuv_type, int width, int height);
         // jpeg转yuv
         int tjpeg2yuv(uint8_t **yuv_buf, size_t *yuv_size,
                       int *yuv_type, int *width, int *height);

@@ -51,6 +51,7 @@ namespace helium {
             }
             expLen = ::ntohl(expLen);
 
+            // 接收内容
             uint32_t nrecv = 0; // 已收长度
             while (nrecv < expLen) {
                 auto n = ::recv(elmt, buf+nrecv, SZ_RBUF-nrecv, 0);
@@ -70,15 +71,29 @@ namespace helium {
             fwrite(buf, nrecv, 1, f);
             fclose(f);
 #endif
+            // 3字节文件类型
+            char const *img_file = nullptr;
+            if (0 == ::strncmp("jpg", reinterpret_cast<char const *>(buf), 3)) {
+                img_file = FFMPEG_JPG;
+            } else if (0 == ::strncmp("png", reinterpret_cast<char const *>(buf), 3)) {
+                img_file = FFMPEG_PNG;
+            } else {}
 
-            jpeg2faceid_transfer jft(buf, nrecv);
+            // 4字节宽高
+            union {char c[2];uint16_t v;} width, height;
+            width.c[0] = buf[4]; width.c[1] = buf[3];
+            height.c[0] = buf[6]; height.c[1] = buf[5];
+            fprintf(stderr, "recved widht:%d, height:%d\n", width.v, height.v);
+
+            // 获取人脸特征文件
+            const static int IMAGE_BUF_OFFSET = 7;
+            jpeg2faceid_transfer jft(buf+IMAGE_BUF_OFFSET, nrecv-IMAGE_BUF_OFFSET);
             if (! jft.init()) {
                 static_cast<void>(::close(elmt));
                 continue;
             }
 
-            // 获取人脸特征文件
-            auto faceid = jft.genFaceId();
+            auto faceid = jft.genFaceId(img_file, width.v, height.v);
             if (faceid.len == 0) {
                 // 未找到人脸
                 static_cast<void>(::close(elmt));

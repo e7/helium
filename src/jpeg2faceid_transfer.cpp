@@ -13,7 +13,6 @@
 
 using helium::intu_array;
 
-#define FFMPEG_IMG      "/tmp/ffmpeg.jpg"
 #define FFMPEG_YUV      "/tmp/ffmpeg.yuv"
 
 
@@ -30,8 +29,9 @@ helium::jpeg2faceid_transfer::~jpeg2faceid_transfer() {
 
 
 int helium::jpeg2faceid_transfer::image2yuv(
+        char const *img_file,
         uint8_t **yuv_buf, size_t *yuv_size,
-        int *yuv_type, int *width, int *height
+        int *yuv_type, int width, int height
 ) {
     auto write_full = [](int fd, uint8_t const *buf, size_t len) -> ssize_t {
         int sent = 0;
@@ -70,13 +70,13 @@ int helium::jpeg2faceid_transfer::image2yuv(
 //        fprintf(stderr, "decompress image failed:%s\n", ::tjGetErrorStr());
 //        return -1;
 //    }
-    *width = 750;
-    *height = 500;
+//    *width = 750;
+//    *height = 500;
 
     // 保存image
-    int write_fd = ::open(FFMPEG_IMG, O_WRONLY | O_TRUNC | O_CLOEXEC);
+    int write_fd = ::open(img_file, O_WRONLY | O_TRUNC | O_CLOEXEC);
     if (-1 == write_fd) {
-        fprintf(stderr, "[ERROR] open file %s failed\n", FFMPEG_IMG);
+        fprintf(stderr, "[ERROR] open file %s failed\n", img_file);
         return -1;
     }
     if (-1 == write_full(write_fd, this->buf, this->len)) {
@@ -96,7 +96,7 @@ int helium::jpeg2faceid_transfer::image2yuv(
     if (0 == pid) {
         // child process
         if (execl("/usr/bin/ffmpeg",
-                  "ffmpeg", "-y", "-i", FFMPEG_IMG, "-s", "750x500",
+                  "ffmpeg", "-y", "-i", img_file,
                   "-pix_fmt", "yuv420p", FFMPEG_YUV, nullptr)) {
             ::fprintf(stderr, "[ERROR] failed to exec ffmpeg:%d\n", errno);
             ::exit(1);
@@ -190,14 +190,16 @@ LPAFD_FSDK_FACERES helium::jpeg2faceid_transfer::face_detection(
 }
 
 
-intu_array&& helium::jpeg2faceid_transfer::genFaceId() {
+intu_array&& helium::jpeg2faceid_transfer::genFaceId(
+        char const *img_file, int width, int height
+) {
     uint8_t *yuv_buf;
     size_t yuv_size;
-    int yuv_type, width, height;
+    int yuv_type;
     auto hrecognition = afr_fsdk_engine::get_instance()->get_engine();
 
     // jpeg转换为yuv
-    if (-1 == image2yuv(&yuv_buf, &yuv_size, &yuv_type, &width, &height)) {
+    if (-1 == image2yuv(img_file, &yuv_buf, &yuv_size, &yuv_type, width, height)) {
         return std::move(intu_array());
     }
     unique_ptr<uint8_t[]> free_yuv_buf(yuv_buf);
